@@ -1,25 +1,124 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:loveisblind/constants/blind_theme.dart';
+import 'package:loveisblind/screens/GestureScreen.dart';
+import 'package:loveisblind/screens/LocationScreen.dart';
+import 'package:loveisblind/screens/MainNavigationScreen.dart';
 import 'package:loveisblind/screens/TextRecognitionScreen.dart';
+import 'package:loveisblind/screens/VoiceCallingScreen.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 void main() {
-  runApp(const VoiceAccessibilityApp());
+  runApp(const VoiceAssistantApp());
 }
 
-class VoiceAccessibilityApp extends StatelessWidget {
-  const VoiceAccessibilityApp({Key? key}) : super(key: key);
+class VoiceAssistantApp extends StatelessWidget {
+  const VoiceAssistantApp({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Voice Assistant for Blind',
-      theme: AccessibilityTheme.theme,
+      title: 'Voice Assistant',
+      theme: _buildAppTheme(),
       home: const MainScreen(),
       debugShowCheckedModeBanner: false,
+    );
+  }
+
+  ThemeData _buildAppTheme() {
+    return ThemeData(
+      useMaterial3: true,
+      colorScheme: ColorScheme.fromSeed(
+        seedColor: const Color(0xFF6750A4),
+        brightness: Brightness.light,
+      ),
+      appBarTheme: const AppBarTheme(
+        backgroundColor: Color(0xFF6750A4),
+        foregroundColor: Colors.white,
+        elevation: 2.0,
+        centerTitle: true,
+        titleTextStyle: TextStyle(
+          fontSize: 20,
+          fontWeight: FontWeight.w600,
+          color: Colors.white,
+        ),
+      ),
+      textTheme: const TextTheme(
+        displayLarge: TextStyle(
+          fontSize: 24,
+          fontWeight: FontWeight.bold,
+          color: Color(0xFF1C1B1F),
+        ),
+        displayMedium: TextStyle(
+          fontSize: 20,
+          fontWeight: FontWeight.w600,
+          color: Color(0xFF1C1B1F),
+        ),
+        bodyLarge: TextStyle(
+          fontSize: 16,
+          color: Color(0xFF1C1B1F),
+          height: 1.5,
+        ),
+        bodyMedium: TextStyle(
+          fontSize: 14,
+          color: Color(0xFF49454F),
+          height: 1.4,
+        ),
+        labelLarge: TextStyle(
+          fontSize: 16,
+          fontWeight: FontWeight.w500,
+          color: Colors.white,
+        ),
+      ),
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ElevatedButton.styleFrom(
+          minimumSize: const Size(double.infinity, 56),
+          backgroundColor: const Color(0xFF6750A4),
+          foregroundColor: Colors.white,
+          textStyle: const TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w500,
+          ),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12.0),
+          ),
+          elevation: 2.0,
+          padding: const EdgeInsets.symmetric(
+            horizontal: 24,
+            vertical: 16,
+          ),
+        ),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          minimumSize: const Size(double.infinity, 56),
+          foregroundColor: const Color(0xFF6750A4),
+          textStyle: const TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w500,
+          ),
+          side: const BorderSide(color: Color(0xFF6750A4), width: 1.5),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12.0),
+          ),
+          padding: const EdgeInsets.symmetric(
+            horizontal: 24,
+            vertical: 16,
+          ),
+        ),
+      ),
+      cardTheme: CardTheme(
+        elevation: 2.0,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16.0),
+        ),
+        margin: const EdgeInsets.all(8),
+      ),
+      iconTheme: const IconThemeData(
+        size: 24,
+        color: Color(0xFF6750A4),
+      ),
     );
   }
 }
@@ -33,7 +132,7 @@ class MainScreen extends StatefulWidget {
 
 class _MainScreenState extends State<MainScreen> {
   bool _isListening = false;
-  String _currentStatus = "Tap anywhere to start voice commands";
+  String _currentStatus = "Tap to start voice commands";
 
   // Speech recognition and TTS
   final SpeechToText _speechToText = SpeechToText();
@@ -74,6 +173,13 @@ class _MainScreenState extends State<MainScreen> {
       voiceCommand: "make call",
       action: FeatureAction.makeCall,
     ),
+    AppFeature(
+      name: "Gesture",
+      description: "Gesture Detection",
+      icon: Icons.gesture,
+      voiceCommand: "gesture",
+      action: FeatureAction.gesture,
+    ),
   ];
 
   @override
@@ -108,7 +214,7 @@ class _MainScreenState extends State<MainScreen> {
             _currentStatus = "Listening... Say your command";
           } else if (status == 'notListening') {
             _isListening = false;
-            _currentStatus = "Tap anywhere to start voice commands";
+            _currentStatus = "Tap to start voice commands";
           }
         });
       },
@@ -136,8 +242,8 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   Future<void> _speakWelcomeMessage() async {
-    const welcomeMsg = "Welcome to Voice Assistant for the blind. "
-        "You can tap anywhere on the screen to start voice commands. "
+    const welcomeMsg = "Welcome to Voice Assistant. "
+        "You can tap the microphone to start voice commands. "
         "Available commands are: read text, ask question, where am I, or make call. "
         "You can also tap the buttons directly.";
 
@@ -160,7 +266,7 @@ class _MainScreenState extends State<MainScreen> {
 
   void _startVoiceRecognition() {
     _lastWords = '';
-    AccessibilityTheme.provideHapticFeedback();
+    HapticFeedback.lightImpact();
 
     _speechToText.listen(
       onResult: (result) {
@@ -186,13 +292,13 @@ class _MainScreenState extends State<MainScreen> {
     _speechToText.stop();
     setState(() {
       _isListening = false;
-      _currentStatus = "Tap anywhere to start voice commands";
+      _currentStatus = "Tap to start voice commands";
     });
   }
 
   Future<void> _handleVoiceCommand(String command) async {
     command = command.toLowerCase().trim();
-    print("Voice command received: $command"); // Debug print
+    print("Voice command received: $command");
 
     bool commandFound = false;
 
@@ -229,7 +335,6 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   bool _isCommandMatch(String spokenCommand, String targetCommand) {
-    // More flexible command matching
     List<String> spokenWords = spokenCommand.split(' ');
     List<String> targetWords = targetCommand.split(' ');
 
@@ -241,7 +346,6 @@ class _MainScreenState extends State<MainScreen> {
       }
     }
 
-    // If at least 60% of words match, consider it a match
     return matchCount >= (targetWords.length * 0.6);
   }
 
@@ -274,13 +378,19 @@ class _MainScreenState extends State<MainScreen> {
       case FeatureAction.location:
         Navigator.push(
           context,
-          MaterialPageRoute(builder: (context) => const LocationScreen()),
+          MaterialPageRoute(builder: (context) => const VoiceCallingScreen()),
         );
         break;
       case FeatureAction.makeCall:
         Navigator.push(
           context,
-          MaterialPageRoute(builder: (context) => const CallScreen()),
+          MaterialPageRoute(builder: (context) => const VoiceCallingScreen()),
+        );
+        break;
+      case FeatureAction.gesture:
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => const MainNavigationScreen()),
         );
         break;
     }
@@ -310,122 +420,123 @@ class _MainScreenState extends State<MainScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Voice Assistant'),
-        centerTitle: true,
       ),
-      body: GestureDetector(
-        // Full screen tap to activate voice
-        onTap: _toggleListening,
-        child: Container(
-          width: double.infinity,
-          height: double.infinity,
-          color: Colors.transparent,
-          child: Padding(
-            padding: const EdgeInsets.all(AccessibilityTheme.spacingM),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                // Voice status indicator
-                Semantics(
-                  label: _currentStatus,
-                  child: Container(
-                    padding: const EdgeInsets.all(AccessibilityTheme.spacingL),
-                    decoration: BoxDecoration(
-                      color: _isListening
-                          ? AccessibilityTheme.successColor.withOpacity(0.1)
-                          : AccessibilityTheme.surfaceColor,
-                      border: Border.all(
-                        color: _isListening
-                            ? AccessibilityTheme.successColor
-                            : AccessibilityTheme.primaryColor,
-                        width: 3.0,
-                      ),
-                      borderRadius: BorderRadius.circular(16.0),
-                    ),
-                    child: Column(
-                      children: [
-                        Icon(
-                          _isListening ? Icons.mic : Icons.mic_none,
-                          size: 64.0,
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          children: [
+            // Voice status indicator
+            Card(
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(24.0),
+                child: Column(
+                  children: [
+                    GestureDetector(
+                      onTap: _toggleListening,
+                      child: Container(
+                        width: 80,
+                        height: 80,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
                           color: _isListening
-                              ? AccessibilityTheme.successColor
-                              : AccessibilityTheme.primaryColor,
-                        ),
-                        const SizedBox(height: AccessibilityTheme.spacingM),
-                        Text(
-                          _currentStatus,
-                          style: Theme.of(context).textTheme.displayMedium,
-                          textAlign: TextAlign.center,
-                        ),
-                        if (_isListening && _lastWords.isNotEmpty) ...[
-                          const SizedBox(height: AccessibilityTheme.spacingS),
-                          Text(
-                            'Heard: $_lastWords',
-                            style: Theme.of(context).textTheme.bodyMedium,
-                            textAlign: TextAlign.center,
+                              ? Colors.green.withOpacity(0.2)
+                              : Theme.of(context).colorScheme.primaryContainer,
+                          border: Border.all(
+                            color: _isListening
+                                ? Colors.green
+                                : Theme.of(context).colorScheme.primary,
+                            width: 2.0,
                           ),
-                        ],
-                      ],
+                        ),
+                        child: Icon(
+                          _isListening ? Icons.mic : Icons.mic_none,
+                          size: 40.0,
+                          color: _isListening
+                              ? Colors.green
+                              : Theme.of(context).colorScheme.primary,
+                        ),
+                      ),
                     ),
-                  ),
+                    const SizedBox(height: 16),
+                    Text(
+                      _currentStatus,
+                      style: Theme.of(context).textTheme.bodyLarge,
+                      textAlign: TextAlign.center,
+                    ),
+                    if (_isListening && _lastWords.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        'Heard: $_lastWords',
+                        style: Theme.of(context).textTheme.bodyMedium,
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+                  ],
                 ),
-
-                const SizedBox(height: AccessibilityTheme.spacingXL),
-
-                // Available features list
-                Semantics(
-                  label: "Available features",
-                  child: Text(
-                    "Available Commands:",
-                    style: Theme.of(context).textTheme.displayLarge,
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-
-                const SizedBox(height: AccessibilityTheme.spacingL),
-
-                // Feature buttons (also accessible via voice)
-                Expanded(
-                  child: ListView.builder(
-                    itemCount: _features.length,
-                    itemBuilder: (context, index) {
-                      final feature = _features[index];
-                      return Padding(
-                        padding: const EdgeInsets.symmetric(
-                          vertical: AccessibilityTheme.spacingS,
-                        ),
-                        child: AccessibleButton(
-                          text: feature.name,
-                          semanticLabel:
-                              '${feature.name}. ${feature.description}. Say "${feature.voiceCommand}" or tap to activate.',
-                          icon: feature.icon,
-                          onPressed: () async {
-                            await _speak("Opening ${feature.name}");
-                            await Future.delayed(
-                                const Duration(milliseconds: 500));
-                            _navigateToFeature(feature.action);
-                          },
-                        ),
-                      );
-                    },
-                  ),
-                ),
-
-                const SizedBox(height: AccessibilityTheme.spacingL),
-
-                // Emergency/Help button
-                AccessibleButton(
-                  text: "Help & Instructions",
-                  semanticLabel:
-                      "Help and instructions. Double tap for voice help.",
-                  icon: Icons.help,
-                  isPrimary: false,
-                  onPressed: () {
-                    _speakHelpMessage();
-                  },
-                ),
-              ],
+              ),
             ),
-          ),
+
+            const SizedBox(height: 24),
+
+            // Available features title
+            Text(
+              "Available Features",
+              style: Theme.of(context).textTheme.displayLarge,
+              textAlign: TextAlign.center,
+            ),
+
+            const SizedBox(height: 16),
+
+            // Feature buttons
+            Expanded(
+              child: ListView.builder(
+                itemCount: _features.length,
+                itemBuilder: (context, index) {
+                  final feature = _features[index];
+                  return Card(
+                    margin: const EdgeInsets.symmetric(vertical: 8.0),
+                    child: ListTile(
+                      leading: Icon(
+                        feature.icon,
+                        size: 32,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                      title: Text(
+                        feature.name,
+                        style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                              fontWeight: FontWeight.w600,
+                            ),
+                      ),
+                      subtitle: Text(
+                        feature.description,
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                      trailing: const Icon(Icons.arrow_forward_ios),
+                      onTap: () async {
+                        HapticFeedback.lightImpact();
+                        await _speak("Opening ${feature.name}");
+                        await Future.delayed(const Duration(milliseconds: 500));
+                        _navigateToFeature(feature.action);
+                      },
+                    ),
+                  );
+                },
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            // Help button
+            OutlinedButton.icon(
+              onPressed: () {
+                HapticFeedback.lightImpact();
+                _speakHelpMessage();
+              },
+              icon: const Icon(Icons.help),
+              label: const Text("Help & Instructions"),
+            ),
+          ],
         ),
       ),
     );
@@ -449,16 +560,41 @@ class AppFeature {
   });
 }
 
-enum FeatureAction {
-  textReader,
-  aiAssistant,
-  location,
-  makeCall,
+enum FeatureAction { textReader, aiAssistant, location, makeCall, gesture }
+
+// Feature screens
+class TextReaderScreen extends StatefulWidget {
+  const TextReaderScreen({Key? key}) : super(key: key);
+
+  @override
+  State<TextReaderScreen> createState() => _TextReaderScreenState();
 }
 
-// Placeholder screens for each feature
-class TextReaderScreen extends StatelessWidget {
-  const TextReaderScreen({Key? key}) : super(key: key);
+class _TextReaderScreenState extends State<TextReaderScreen> {
+  final FlutterTts _flutterTts = FlutterTts();
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeTts();
+    _announceScreen();
+  }
+
+  Future<void> _initializeTts() async {
+    await _flutterTts.setLanguage("en-US");
+    await _flutterTts.setSpeechRate(0.5);
+  }
+
+  Future<void> _announceScreen() async {
+    await Future.delayed(const Duration(milliseconds: 500));
+    await _flutterTts.speak("Opening Text Reader Screen");
+  }
+
+  @override
+  void dispose() {
+    _flutterTts.stop();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -467,50 +603,33 @@ class TextReaderScreen extends StatelessWidget {
         title: const Text('Text Reader'),
       ),
       body: const Center(
-        child: Text(
-          'Text Reader Feature\n(Camera + ML Kit Text Recognition)',
-          style: TextStyle(fontSize: 24),
-          textAlign: TextAlign.center,
-        ),
-      ),
-    );
-  }
-}
-
-class LocationScreen extends StatelessWidget {
-  const LocationScreen({Key? key}) : super(key: key);
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Location Helper'),
-      ),
-      body: const Center(
-        child: Text(
-          'Location Feature\n(GPS + Reverse Geocoding)',
-          style: TextStyle(fontSize: 24),
-          textAlign: TextAlign.center,
-        ),
-      ),
-    );
-  }
-}
-
-class CallScreen extends StatelessWidget {
-  const CallScreen({Key? key}) : super(key: key);
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Make Call'),
-      ),
-      body: const Center(
-        child: Text(
-          'Call Feature\n(Contact Access + Voice Dialing)',
-          style: TextStyle(fontSize: 24),
-          textAlign: TextAlign.center,
+        child: Padding(
+          padding: EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.camera_alt,
+                size: 80,
+                color: Color(0xFF6750A4),
+              ),
+              SizedBox(height: 24),
+              Text(
+                'Text Reader Feature',
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              SizedBox(height: 16),
+              Text(
+                'Camera + ML Kit Text Recognition functionality will be implemented here',
+                style: TextStyle(fontSize: 16),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
         ),
       ),
     );

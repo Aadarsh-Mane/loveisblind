@@ -22,7 +22,7 @@ class AccessibilityTheme {
 
   // Large touch targets (minimum 48x48 dp recommended)
   static const double minTouchTargetSize = 56.0;
-  static const double buttonHeight = 64.0;
+  static const double buttonHeight = 80.0; // Increased for multi-line text
   static const double iconSize = 32.0;
 
   // Generous spacing for easier navigation
@@ -112,7 +112,7 @@ class AccessibilityTheme {
           elevation: 3.0,
           padding: const EdgeInsets.symmetric(
             horizontal: spacingM,
-            vertical: spacingS,
+            vertical: spacingM,
           ),
         ),
       ),
@@ -132,7 +132,7 @@ class AccessibilityTheme {
           ),
           padding: const EdgeInsets.symmetric(
             horizontal: spacingM,
-            vertical: spacingS,
+            vertical: spacingM,
           ),
         ),
       ),
@@ -149,7 +149,7 @@ class AccessibilityTheme {
           ),
           padding: const EdgeInsets.symmetric(
             horizontal: spacingM,
-            vertical: spacingS,
+            vertical: spacingM,
           ),
         ),
       ),
@@ -233,7 +233,7 @@ class AccessibilityTheme {
   }
 }
 
-// Custom accessible button widget
+// Enhanced accessible button widget for better multi-line text support
 class AccessibleButton extends StatelessWidget {
   final String text;
   final VoidCallback onPressed;
@@ -260,6 +260,12 @@ class AccessibleButton extends StatelessWidget {
           AccessibilityTheme.provideHapticFeedback();
           onPressed();
         },
+        style: ElevatedButton.styleFrom(
+          // Dynamic height based on content
+          minimumSize:
+              const Size(double.infinity, AccessibilityTheme.buttonHeight),
+          padding: const EdgeInsets.all(AccessibilityTheme.spacingM),
+        ),
         child: _buildButtonContent(),
       );
     } else {
@@ -268,31 +274,64 @@ class AccessibleButton extends StatelessWidget {
           AccessibilityTheme.provideHapticFeedback();
           onPressed();
         },
+        style: OutlinedButton.styleFrom(
+          // Dynamic height based on content
+          minimumSize:
+              const Size(double.infinity, AccessibilityTheme.buttonHeight),
+          padding: const EdgeInsets.all(AccessibilityTheme.spacingM),
+        ),
         child: _buildButtonContent(),
       );
     }
 
-    return Semantics(
-      label: semanticLabel ?? text,
-      hint: 'Double tap to activate',
-      button: true,
-      enabled: true,
-      child: button,
+    return Container(
+      margin:
+          const EdgeInsets.symmetric(vertical: AccessibilityTheme.spacingXS),
+      child: Semantics(
+        label: semanticLabel ?? text.replaceAll('\n', ' '),
+        hint: 'Double tap to activate',
+        button: true,
+        enabled: true,
+        child: button,
+      ),
     );
   }
 
   Widget _buildButtonContent() {
     if (icon != null) {
-      return Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: AccessibilityTheme.iconSize),
-          const SizedBox(width: AccessibilityTheme.spacingS),
-          Text(text),
-        ],
+      return IntrinsicHeight(
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Icon(icon, size: AccessibilityTheme.iconSize),
+            const SizedBox(width: AccessibilityTheme.spacingS),
+            Flexible(
+              child: Text(
+                text,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: AccessibilityTheme.buttonTextSize,
+                  fontWeight: FontWeight.bold,
+                  height: 1.3,
+                ),
+                maxLines: null, // Allow unlimited lines
+              ),
+            ),
+          ],
+        ),
       );
     }
-    return Text(text);
+
+    return Text(
+      text,
+      textAlign: TextAlign.center,
+      style: const TextStyle(
+        fontSize: AccessibilityTheme.buttonTextSize,
+        fontWeight: FontWeight.bold,
+        height: 1.3,
+      ),
+      maxLines: null, // Allow unlimited lines
+    );
   }
 }
