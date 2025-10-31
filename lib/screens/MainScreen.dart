@@ -365,7 +365,8 @@ class _MainScreenState extends State<MainScreen> {
       case FeatureAction.textReader:
         Navigator.push(
           context,
-          MaterialPageRoute(builder: (context) => const TextReaderScreen()),
+          MaterialPageRoute(
+              builder: (context) => const AIAssistantTextScreen()),
         );
         break;
       case FeatureAction.aiAssistant:
