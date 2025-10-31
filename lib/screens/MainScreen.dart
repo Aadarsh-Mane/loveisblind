@@ -152,13 +152,13 @@ class _MainScreenState extends State<MainScreen> {
       voiceCommand: "read text",
       action: FeatureAction.textReader,
     ),
-    AppFeature(
-      name: "AI Assistant",
-      description: "Ask any question and get spoken answers",
-      icon: Icons.psychology,
-      voiceCommand: "ask question",
-      action: FeatureAction.aiAssistant,
-    ),
+    // AppFeature(
+    //   name: "AI Assistant",
+    //   description: "Ask any question and get spoken answers",
+    //   icon: Icons.psychology,
+    //   voiceCommand: "ask question",
+    //   action: FeatureAction.aiAssistant,
+    // ),
     AppFeature(
       name: "Location Helper",
       description: "Find out where you are right now",
@@ -378,7 +378,7 @@ class _MainScreenState extends State<MainScreen> {
       case FeatureAction.location:
         Navigator.push(
           context,
-          MaterialPageRoute(builder: (context) => const VoiceCallingScreen()),
+          MaterialPageRoute(builder: (context) => const LocationScreen()),
         );
         break;
       case FeatureAction.makeCall:

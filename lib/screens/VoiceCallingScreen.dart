@@ -38,7 +38,7 @@ class _VoiceCallingScreenState extends State<VoiceCallingScreen> {
 
   void _initializeTTS() async {
     await _tts.setLanguage("en-US");
-    await _tts.setSpeechRate(0.8);
+    await _tts.setSpeechRate(0.5); // Slower for better clarity
     await _tts.setVolume(1.0);
     await _tts.setPitch(1.0);
   }
@@ -91,13 +91,13 @@ class _VoiceCallingScreenState extends State<VoiceCallingScreen> {
         }
 
         _contactsLoaded = true;
-        _status = 'Tap to start voice command';
+        _status = 'Ready. Tap microphone to speak';
       });
 
       await _announceScreenOpening();
     } catch (e) {
       setState(() {
-        _status = 'Error loading contacts: ${e.toString()}';
+        _status = 'Error loading contacts';
         _contactsLoaded = false;
       });
       await _speak('Error loading contacts from device');
@@ -115,9 +115,10 @@ class _VoiceCallingScreenState extends State<VoiceCallingScreen> {
     _speechEnabled = await _speech.initialize(
       onError: (errorNotification) {
         setState(() {
-          _status = 'Speech recognition error. Please try again.';
+          _status = 'Error. Tap microphone to try again';
+          _isListening = false;
         });
-        _speak(_status);
+        _speak('Error occurred. Please try again');
       },
       onStatus: (status) {
         if (status == 'done' || status == 'notListening') {
@@ -130,13 +131,13 @@ class _VoiceCallingScreenState extends State<VoiceCallingScreen> {
 
     if (_speechEnabled && _contactsLoaded) {
       setState(() {
-        _status = 'Voice commands ready. Say "Call" followed by contact name.';
+        _status = 'Ready. Say "Call" and name, or "Emergency"';
       });
     } else if (!_speechEnabled) {
       setState(() {
-        _status = 'Speech recognition not available on this device.';
+        _status = 'Speech recognition not available';
       });
-      await _speak(_status);
+      await _speak('Speech recognition not available on this device');
     }
   }
 
@@ -149,87 +150,126 @@ class _VoiceCallingScreenState extends State<VoiceCallingScreen> {
       return;
     }
 
-    // Announce first few contacts as examples
-    List<String> contactNames = _contactsMap.keys.take(5).toList();
-    String contactsPreview = contactNames.join(', ');
-
     await _speak(
         'Voice Calling Screen opened. ${_contactsMap.length} contacts loaded. '
-        'Examples: $contactsPreview. Tap the microphone button to start voice command.');
+        'Say "Call" and contact name, or say "Emergency" to call 112. '
+        'Tap the microphone button to start.');
   }
 
   Future<void> _speak(String text) async {
+    await _tts.stop(); // Stop any ongoing speech first
     await _tts.speak(text);
   }
 
   void _startListening() async {
+    // Stop any existing listening session first
+    if (_isListening) {
+      await _stopListening();
+      return;
+    }
+
     if (!_speechEnabled) {
       await _speak('Speech recognition not available');
       return;
     }
 
-    if (!_contactsLoaded) {
-      await _speak('Contacts not loaded yet. Please wait.');
-      return;
-    }
-
     AccessibilityTheme.provideHapticFeedback();
-    await _speak('Listening for call command');
+    await _speak('Listening');
 
     setState(() {
       _isListening = true;
-      _status = 'Listening... Say "Call" followed by contact name';
+      _status = 'Listening...';
       _lastWords = '';
     });
 
     await _speech.listen(
       onResult: (result) {
         setState(() {
-          _lastWords = result.recognizedWords.toLowerCase();
+          _lastWords = result.recognizedWords;
           _status = 'Heard: $_lastWords';
         });
 
+        // Process immediately for emergency
+        String command = result.recognizedWords.toLowerCase();
+        if (command.contains('emergency') ||
+            command.contains('help') ||
+            command.contains('112') ||
+            command.contains('police') ||
+            command.contains('ambulance')) {
+          _stopListening();
+          _makeEmergencyCall();
+          return;
+        }
+
+        // Process other commands when final
         if (result.finalResult) {
-          _processVoiceCommand(_lastWords);
+          _stopListening();
+          _processVoiceCommand(command);
         }
       },
-      listenFor: const Duration(seconds: 10),
-      pauseFor: const Duration(seconds: 3),
+      listenFor: const Duration(seconds: 5), // Reduced from 10
+      pauseFor: const Duration(seconds: 2), // Reduced from 3
+      cancelOnError: true,
+      partialResults: true, // To catch emergency faster
     );
+
+    // Auto-stop after timeout
+    Future.delayed(const Duration(seconds: 6), () {
+      if (_isListening) {
+        _stopListening();
+      }
+    });
   }
 
-  void _stopListening() async {
+  Future<void> _stopListening() async {
+    if (!_isListening) return;
+
     await _speech.stop();
     setState(() {
       _isListening = false;
-      _status = 'Stopped listening';
+      if (_lastWords.isEmpty) {
+        _status = 'No command heard. Tap to try again';
+      }
     });
     AccessibilityTheme.provideHapticFeedback();
   }
 
   void _processVoiceCommand(String command) async {
-    // Remove common variations and clean the command
+    // Clean the command
     String cleanCommand = command
         .replaceAll('please', '')
         .replaceAll('could you', '')
         .replaceAll('can you', '')
-        .trim();
+        .trim()
+        .toLowerCase();
 
-    // Check if command starts with "call"
+    // Check for emergency first (already handled in onResult, but double-check)
+    if (cleanCommand.contains('emergency') ||
+        cleanCommand.contains('112') ||
+        cleanCommand.contains('help')) {
+      await _makeEmergencyCall();
+      return;
+    }
+
+    // Check for call command
     if (cleanCommand.startsWith('call ')) {
       String contactName = cleanCommand.substring(5).trim();
       await _makeCall(contactName);
     } else if (cleanCommand.contains('call ')) {
-      // Handle variations like "please call mom"
       int callIndex = cleanCommand.indexOf('call ');
       String contactName = cleanCommand.substring(callIndex + 5).trim();
       await _makeCall(contactName);
+    } else if (cleanCommand == 'stop' || cleanCommand == 'cancel') {
+      setState(() {
+        _status = 'Cancelled. Tap microphone to start';
+      });
+      await _speak('Cancelled');
     } else {
       setState(() {
-        _status =
-            'Command not recognized. Say "Call" followed by contact name.';
+        _status = 'Say "Call" and name, or "Emergency"';
       });
-      await _speak(_status);
+      await _speak(
+          'Please say Call followed by contact name, or say Emergency');
     }
   }
 
@@ -261,31 +301,11 @@ class _VoiceCallingScreenState extends State<VoiceCallingScreen> {
           break;
         }
       }
-
-      // If still not found, try word matching
-      if (phoneNumber == null) {
-        List<String> searchWords = contactName.toLowerCase().split(' ');
-        for (String contact in _contactsMap.keys) {
-          List<String> contactWords = contact.split(' ');
-          for (String searchWord in searchWords) {
-            for (String contactWord in contactWords) {
-              if (contactWord.startsWith(searchWord) ||
-                  searchWord.startsWith(contactWord)) {
-                phoneNumber = _contactsMap[contact];
-                foundContactName = contact;
-                break;
-              }
-            }
-            if (phoneNumber != null) break;
-          }
-          if (phoneNumber != null) break;
-        }
-      }
     }
 
     if (phoneNumber != null && foundContactName != null) {
       setState(() {
-        _status = 'Calling $foundContactName at $phoneNumber';
+        _status = 'Calling $foundContactName';
       });
 
       await _speak('Calling $foundContactName');
@@ -296,16 +316,14 @@ class _VoiceCallingScreenState extends State<VoiceCallingScreen> {
       try {
         if (await canLaunchUrl(phoneUri)) {
           await launchUrl(phoneUri);
-          await _speak('Call initiated to $foundContactName');
         } else {
-          throw Exception('Cannot make calls on this device');
+          throw Exception('Cannot make calls');
         }
       } catch (e) {
         setState(() {
           _status = 'Error: Unable to make call';
         });
-        await _speak(
-            'Error: Unable to make call to $foundContactName. Please try again.');
+        await _speak('Error making call. Please try again.');
         AccessibilityTheme.provideErrorFeedback();
       }
     } else {
@@ -317,7 +335,7 @@ class _VoiceCallingScreenState extends State<VoiceCallingScreen> {
       List<String> similarContacts = _findSimilarContacts(contactName);
       String suggestion = '';
       if (similarContacts.isNotEmpty) {
-        suggestion = ' Did you mean: ${similarContacts.take(3).join(', ')}?';
+        suggestion = ' Try saying: ${similarContacts.first}';
       }
 
       await _speak('Contact $contactName not found.$suggestion');
@@ -330,13 +348,13 @@ class _VoiceCallingScreenState extends State<VoiceCallingScreen> {
     String lowerSearch = searchName.toLowerCase();
 
     for (String contact in _contactsMap.keys) {
-      if (contact.contains(
-          lowerSearch.substring(0, (lowerSearch.length / 2).round()))) {
+      if (contact.contains(lowerSearch.substring(
+          0, lowerSearch.length > 2 ? 3 : lowerSearch.length))) {
         similar.add(contact);
       }
     }
 
-    return similar;
+    return similar.take(3).toList();
   }
 
   void _showContactsList() async {
@@ -349,11 +367,46 @@ class _VoiceCallingScreenState extends State<VoiceCallingScreen> {
         'You have ${_contactsMap.length} contacts. Reading first 10 contacts');
 
     List<String> contactNames = _contactsMap.keys.take(10).toList();
-    String contactsList = contactNames.join(', ');
-    await _speak(contactsList);
+    for (int i = 0; i < contactNames.length; i++) {
+      await Future.delayed(const Duration(milliseconds: 500));
+      await _speak('${i + 1}. ${contactNames[i]}');
+    }
 
     if (_contactsMap.length > 10) {
       await _speak('And ${_contactsMap.length - 10} more contacts');
+    }
+  }
+
+  Future<void> _makeEmergencyCall() async {
+    setState(() {
+      _status = 'Calling Emergency 112';
+    });
+
+    await _speak('Emergency! Calling 112 now');
+    AccessibilityTheme.provideSuccessFeedback();
+
+    // Vibrate pattern for emergency
+    HapticFeedback.heavyImpact();
+    await Future.delayed(const Duration(milliseconds: 200));
+    HapticFeedback.heavyImpact();
+    await Future.delayed(const Duration(milliseconds: 200));
+    HapticFeedback.heavyImpact();
+
+    final Uri phoneUri = Uri(scheme: 'tel', path: '112');
+    try {
+      if (await canLaunchUrl(phoneUri)) {
+        await launchUrl(phoneUri);
+        await _speak('Emergency call initiated to 112');
+      } else {
+        throw Exception('Cannot make calls');
+      }
+    } catch (e) {
+      setState(() {
+        _status = 'Error: Unable to call emergency';
+      });
+      await _speak(
+          'Error: Unable to make emergency call. Please dial 112 manually');
+      AccessibilityTheme.provideErrorFeedback();
     }
   }
 
@@ -405,8 +458,10 @@ class _VoiceCallingScreenState extends State<VoiceCallingScreen> {
                 decoration: BoxDecoration(
                   color: AccessibilityTheme.surfaceColor,
                   border: Border.all(
-                    color: AccessibilityTheme.primaryColor,
-                    width: 2.0,
+                    color: _isListening
+                        ? Colors.green
+                        : AccessibilityTheme.primaryColor,
+                    width: _isListening ? 3.0 : 2.0,
                   ),
                   borderRadius: BorderRadius.circular(8.0),
                 ),
@@ -419,20 +474,33 @@ class _VoiceCallingScreenState extends State<VoiceCallingScreen> {
                     const SizedBox(height: AccessibilityTheme.spacingS),
                     Text(
                       _status,
-                      style: Theme.of(context).textTheme.bodyLarge,
+                      style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                            color: _isListening ? Colors.green : null,
+                            fontWeight: _isListening ? FontWeight.bold : null,
+                          ),
                       textAlign: TextAlign.center,
                     ),
                     if (_lastWords.isNotEmpty) ...[
                       const SizedBox(height: AccessibilityTheme.spacingS),
-                      Text(
-                        'Last heard: $_lastWords',
-                        style: Theme.of(context).textTheme.bodyMedium,
-                        textAlign: TextAlign.center,
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: Colors.grey[200],
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          '"$_lastWords"',
+                          style:
+                              Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                    fontStyle: FontStyle.italic,
+                                  ),
+                          textAlign: TextAlign.center,
+                        ),
                       ),
                     ],
                     const SizedBox(height: AccessibilityTheme.spacingS),
                     Text(
-                      'Contacts loaded: ${_contactsMap.length}',
+                      'Contacts: ${_contactsMap.length}',
                       style: Theme.of(context).textTheme.bodyMedium,
                       textAlign: TextAlign.center,
                     ),
@@ -442,45 +510,83 @@ class _VoiceCallingScreenState extends State<VoiceCallingScreen> {
 
               const SizedBox(height: AccessibilityTheme.spacingXL),
 
-              // Main microphone button
+              // Main microphone button with animation
               Semantics(
                 label: _isListening
-                    ? 'Stop listening for voice command'
-                    : 'Start listening for voice command',
-                hint:
-                    'Double tap to ${_isListening ? 'stop' : 'start'} voice recognition',
+                    ? 'Listening. Tap to stop'
+                    : 'Tap to start voice command',
+                hint: 'Say Call and contact name, or say Emergency',
                 button: true,
                 child: GestureDetector(
                   onTap: _isListening ? _stopListening : _startListening,
-                  child: Container(
-                    width: 120,
-                    height: 120,
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 300),
+                    width: _isListening ? 140 : 120,
+                    height: _isListening ? 140 : 120,
                     decoration: BoxDecoration(
                       color: _isListening
-                          ? AccessibilityTheme.errorColor
+                          ? Colors.red
                           : (_contactsLoaded
                               ? AccessibilityTheme.primaryColor
                               : Colors.grey),
                       shape: BoxShape.circle,
                       border: Border.all(
-                        color: AccessibilityTheme.focusColor,
+                        color: _isListening
+                            ? Colors.red.shade900
+                            : AccessibilityTheme.focusColor,
                         width: _isListening ? 4.0 : 2.0,
                       ),
+                      boxShadow: _isListening
+                          ? [
+                              BoxShadow(
+                                color: Colors.red.withOpacity(0.5),
+                                blurRadius: 20,
+                                spreadRadius: 5,
+                              ),
+                            ]
+                          : [],
                     ),
                     child: Icon(
-                      _isListening ? Icons.mic_off : Icons.mic,
-                      size: 60,
-                      color: AccessibilityTheme.backgroundColor,
+                      _isListening ? Icons.mic : Icons.mic_none,
+                      size: _isListening ? 70 : 60,
+                      color: Colors.white,
                     ),
                   ),
                 ),
               ),
 
+              if (_isListening) ...[
+                const SizedBox(height: AccessibilityTheme.spacingM),
+                LinearProgressIndicator(
+                  color: Colors.red,
+                  backgroundColor: Colors.red.shade100,
+                ),
+                const SizedBox(height: AccessibilityTheme.spacingS),
+                Text(
+                  'Listening... Speak now',
+                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                        color: Colors.red,
+                        fontWeight: FontWeight.bold,
+                      ),
+                ),
+              ],
+
               const SizedBox(height: AccessibilityTheme.spacingXL),
 
-              // Action buttons
+              // Quick action buttons
               AccessibleButton(
-                text: 'Show Available Contacts',
+                text: 'EMERGENCY (112)',
+                onPressed: _makeEmergencyCall,
+                icon: Icons.emergency,
+                isPrimary: true,
+                isEmergency: true,
+                semanticLabel: 'Emergency call to 112',
+              ),
+
+              const SizedBox(height: AccessibilityTheme.spacingM),
+
+              AccessibleButton(
+                text: 'Show Contacts',
                 onPressed: _showContactsList,
                 icon: Icons.contacts,
                 isPrimary: false,
@@ -489,35 +595,15 @@ class _VoiceCallingScreenState extends State<VoiceCallingScreen> {
 
               const SizedBox(height: AccessibilityTheme.spacingM),
 
-              AccessibleButton(
-                text: 'Refresh Contacts',
-                onPressed: _refreshContacts,
-                icon: Icons.refresh,
-                isPrimary: false,
-                semanticLabel: 'Refresh contacts from device',
-              ),
-
-              const SizedBox(height: AccessibilityTheme.spacingM),
-
-              AccessibleButton(
-                text: 'Emergency Call',
-                onPressed: () => _makeEmergencyCall(),
-                icon: Icons.emergency,
-                isPrimary: true,
-                semanticLabel: 'Make emergency call to 911',
-              ),
-
-              const SizedBox(height: AccessibilityTheme.spacingM),
-
-              // Instructions
+              // Voice commands guide
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(AccessibilityTheme.spacingM),
                 decoration: BoxDecoration(
-                  color: AccessibilityTheme.surfaceColor,
+                  color: Colors.blue.shade50,
                   borderRadius: BorderRadius.circular(8.0),
                   border: Border.all(
-                    color: AccessibilityTheme.focusColor,
+                    color: Colors.blue,
                     width: 1.0,
                   ),
                 ),
@@ -525,23 +611,25 @@ class _VoiceCallingScreenState extends State<VoiceCallingScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Instructions:',
-                      style: Theme.of(context).textTheme.displayMedium,
+                      'Voice Commands:',
+                      style:
+                          Theme.of(context).textTheme.displayMedium?.copyWith(
+                                color: Colors.blue.shade900,
+                              ),
                     ),
                     const SizedBox(height: AccessibilityTheme.spacingS),
                     Text(
-                      '1. Tap the microphone button\n'
-                      '2. Say "Call" followed by contact name\n'
-                      '3. Example: "Call John" or "Call Sarah"\n'
-                      '4. Wait for confirmation\n'
-                      '5. Use first names or full names',
+                      '• "Call [name]" - Call a contact\n'
+                      '• "Emergency" - Call 112 immediately\n'
+                      '• "Help" - Call 112 immediately\n'
+                      '• "112" - Call emergency services\n'
+                      '• "Stop" or "Cancel" - Cancel command',
                       style: Theme.of(context).textTheme.bodyLarge,
                     ),
                   ],
                 ),
               ),
 
-              // Add bottom padding to ensure content is fully visible
               const SizedBox(height: AccessibilityTheme.spacingXL),
             ],
           ),
@@ -549,22 +637,72 @@ class _VoiceCallingScreenState extends State<VoiceCallingScreen> {
       ),
     );
   }
+}
 
-  Future<void> _makeEmergencyCall() async {
-    await _speak('Making emergency call');
-    AccessibilityTheme.provideSuccessFeedback();
+// Enhanced AccessibleButton widget
+class AccessibleButton extends StatelessWidget {
+  final String text;
+  final VoidCallback onPressed;
+  final IconData icon;
+  final bool isPrimary;
+  final bool isEmergency;
+  final String semanticLabel;
 
-    final Uri phoneUri = Uri(scheme: 'tel', path: '911');
-    try {
-      if (await canLaunchUrl(phoneUri)) {
-        await launchUrl(phoneUri);
-        await _speak('Emergency call initiated');
-      } else {
-        throw Exception('Cannot make calls on this device');
-      }
-    } catch (e) {
-      await _speak('Error: Unable to make emergency call');
-      AccessibilityTheme.provideErrorFeedback();
+  const AccessibleButton({
+    Key? key,
+    required this.text,
+    required this.onPressed,
+    required this.icon,
+    this.isPrimary = true,
+    this.isEmergency = false,
+    required this.semanticLabel,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    Color backgroundColor;
+    Color foregroundColor;
+
+    if (isEmergency) {
+      backgroundColor = Colors.red;
+      foregroundColor = Colors.white;
+    } else if (isPrimary) {
+      backgroundColor = AccessibilityTheme.primaryColor;
+      foregroundColor = Colors.white;
+    } else {
+      backgroundColor = AccessibilityTheme.surfaceColor;
+      foregroundColor = AccessibilityTheme.primaryColor;
     }
+
+    return Semantics(
+      button: true,
+      label: semanticLabel,
+      child: ElevatedButton.icon(
+        onPressed: onPressed,
+        icon: Icon(icon, size: 24),
+        label: Text(
+          text,
+          style: const TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: backgroundColor,
+          foregroundColor: foregroundColor,
+          padding: const EdgeInsets.symmetric(
+            horizontal: AccessibilityTheme.spacingM,
+            vertical: AccessibilityTheme.spacingM,
+          ),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+            side: BorderSide(
+              color: isEmergency ? Colors.red : AccessibilityTheme.primaryColor,
+              width: (isPrimary || isEmergency) ? 0 : 2,
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }

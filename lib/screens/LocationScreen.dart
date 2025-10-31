@@ -6,6 +6,9 @@ import 'package:speech_to_text/speech_to_text.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:mailer/mailer.dart';
+import 'package:mailer/smtp_server.dart';
 
 class LocationScreen extends StatefulWidget {
   const LocationScreen({Key? key}) : super(key: key);
@@ -20,10 +23,19 @@ class _LocationScreenState extends State<LocationScreen> {
 
   bool _isListening = false;
   bool _isLoadingLocation = false;
+  bool _isSendingEmail = false;
   String _locationText = 'Location not retrieved yet';
   String _statusMessage = 'Ready to get your location';
   Position? _currentPosition;
   String? _currentAddress;
+
+  // Contact details
+  final String _recipientEmail = 'onlyaddy68@gmail.com';
+  final String _whatsappNumber = '919326050990'; // Without + for WhatsApp
+
+  // Email configuration - Using Gmail SMTP
+  final String _senderEmail = 'your_app_email@gmail.com'; // Your app's email
+  final String _senderPassword = 'your_app_password'; // App-specific password
 
   @override
   void initState() {
@@ -35,16 +47,20 @@ class _LocationScreenState extends State<LocationScreen> {
 
   Future<void> _initializeTTS() async {
     await _tts.setLanguage('en-US');
-    await _tts.setSpeechRate(0.5); // Slower speech for better comprehension
+    await _tts.setSpeechRate(0.5);
     await _tts.setVolume(1.0);
     await _tts.setPitch(1.0);
   }
 
   Future<void> _initializeSpeech() async {
     bool available = await _speechToText.initialize(
-      onError: (error) => _speak('Speech recognition error: ${error.errorMsg}'),
+      onError: (error) {
+        _speak('Speech recognition error: ${error.errorMsg}');
+        // Stop listening on error
+        setState(() => _isListening = false);
+      },
       onStatus: (status) {
-        if (status == 'done') {
+        if (status == 'done' || status == 'notListening') {
           setState(() => _isListening = false);
         }
       },
@@ -63,40 +79,68 @@ class _LocationScreenState extends State<LocationScreen> {
   Future<void> _announceScreenOpening() async {
     await Future.delayed(const Duration(milliseconds: 500));
     await _speak(
-        'Opening Location Screen. Say "get location" to retrieve your current position, or "help" for available commands.');
+        'Opening Location Screen. Say "get location" to find your current position, '
+        '"email location" to send by email, or "whatsapp location" to send via WhatsApp.');
   }
 
   Future<void> _startListening() async {
-    if (!_isListening && await _speechToText.hasPermission) {
+    // Stop any existing listening session first
+    if (_isListening) {
+      await _stopListening();
+      return;
+    }
+
+    if (await _speechToText.hasPermission) {
       setState(() {
         _isListening = true;
         _statusMessage = 'Listening for commands...';
       });
 
       AccessibilityTheme.provideHapticFeedback();
-      await _speak('Listening for your command');
+      await _speak('Listening');
 
       await _speechToText.listen(
         onResult: _onSpeechResult,
-        listenFor: const Duration(seconds: 10),
-        pauseFor: const Duration(seconds: 3),
+        listenFor: const Duration(seconds: 5), // Reduced from 10 to 5
+        pauseFor: const Duration(seconds: 2), // Reduced from 3 to 2
         partialResults: false,
         localeId: 'en_US',
+        cancelOnError: true, // Important: Cancel on error
       );
+
+      // Auto-stop after timeout
+      Future.delayed(const Duration(seconds: 6), () {
+        if (_isListening) {
+          _stopListening();
+        }
+      });
     } else {
       await _speak(
           'Cannot start listening. Please check microphone permissions.');
     }
   }
 
-  void _onSpeechResult(result) {
+  Future<void> _stopListening() async {
+    if (_isListening) {
+      await _speechToText.stop();
+      setState(() {
+        _isListening = false;
+      });
+    }
+  }
+
+  void _onSpeechResult(result) async {
     String command = result.recognizedWords.toLowerCase().trim();
 
     setState(() {
       _statusMessage = 'Processing command: $command';
     });
 
-    _processVoiceCommand(command);
+    // Stop listening immediately after getting result
+    await _stopListening();
+
+    // Process the command
+    await _processVoiceCommand(command);
   }
 
   Future<void> _processVoiceCommand(String command) async {
@@ -104,10 +148,14 @@ class _LocationScreenState extends State<LocationScreen> {
         command.contains('location') ||
         command.contains('where am i')) {
       await _getCurrentLocation();
+    } else if (command.contains('whatsapp')) {
+      await _shareLocationViaWhatsApp();
+    } else if (command.contains('email') || command.contains('mail')) {
+      await _shareLocationViaEmail();
+    } else if (command.contains('emergency')) {
+      await _sendEmergency();
     } else if (command.contains('repeat') || command.contains('say again')) {
       await _repeatLocation();
-    } else if (command.contains('share') || command.contains('send')) {
-      await _shareLocation();
     } else if (command.contains('help')) {
       await _provideHelp();
     } else if (command.contains('back') || command.contains('exit')) {
@@ -147,7 +195,7 @@ class _LocationScreenState extends State<LocationScreen> {
       // Check if location services are enabled
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
-        throw 'Location services are disabled';
+        throw 'Location services are disabled. Please enable them in settings.';
       }
 
       // Get current position
@@ -177,10 +225,11 @@ class _LocationScreenState extends State<LocationScreen> {
       });
 
       AccessibilityTheme.provideSuccessFeedback();
-      await _speak('Location found: $_locationText');
+      await _speak(
+          'Location found: $_locationText. Say "whatsapp location" or "email location" to share.');
     } catch (e) {
       setState(() {
-        _statusMessage = 'Error getting location: $e';
+        _statusMessage = 'Error: $e';
         _locationText = 'Unable to get location';
       });
 
@@ -213,33 +262,168 @@ class _LocationScreenState extends State<LocationScreen> {
     return addressParts.join(', ');
   }
 
+  Future<void> _shareLocationViaWhatsApp() async {
+    if (_currentPosition == null) {
+      await _speak('Please get your location first. Say "get location"');
+      return;
+    }
+
+    setState(() {
+      _statusMessage = 'Opening WhatsApp...';
+    });
+
+    String message = 'My current location:\n'
+        '$_locationText\n\n'
+        'Google Maps: https://maps.google.com/?q=${_currentPosition!.latitude},${_currentPosition!.longitude}';
+
+    try {
+      // Try WhatsApp Web URL first (most reliable)
+      final Uri whatsappUrl = Uri.parse(
+          'https://api.whatsapp.com/send?phone=$_whatsappNumber&text=${Uri.encodeComponent(message)}');
+
+      if (await canLaunchUrl(whatsappUrl)) {
+        bool launched = await launchUrl(
+          whatsappUrl,
+          mode: LaunchMode.externalApplication,
+        );
+        if (launched) {
+          await _speak(
+              'Opening WhatsApp with your location. Tap send to share.');
+          AccessibilityTheme.provideSuccessFeedback();
+          setState(() {
+            _statusMessage = 'WhatsApp opened';
+          });
+          return;
+        }
+      }
+
+      // Try alternative WhatsApp URL
+      final Uri whatsappAlt = Uri.parse(
+          'https://wa.me/$_whatsappNumber?text=${Uri.encodeComponent(message)}');
+
+      if (await canLaunchUrl(whatsappAlt)) {
+        bool launched = await launchUrl(
+          whatsappAlt,
+          mode: LaunchMode.externalApplication,
+        );
+        if (launched) {
+          await _speak(
+              'Opening WhatsApp with your location. Tap send to share.');
+          AccessibilityTheme.provideSuccessFeedback();
+          return;
+        }
+      }
+
+      // If WhatsApp can't be opened, copy to clipboard
+      await _copyLocationToClipboard();
+      await _speak(
+          'WhatsApp could not be opened. Location copied to clipboard. '
+          'Open WhatsApp manually and paste to share.');
+    } catch (e) {
+      await _copyLocationToClipboard();
+      await _speak('Could not open WhatsApp. Location copied to clipboard.');
+    }
+  }
+
+  Future<void> _shareLocationViaEmail() async {
+    if (_currentPosition == null) {
+      await _speak('Please get your location first. Say "get location"');
+      return;
+    }
+
+    bool emailSent = await _sendEmailViaUrlLauncher();
+
+    if (!emailSent) {
+      await _copyLocationToClipboard();
+      await _speak(
+          'Email app could not be opened. Location copied to clipboard. '
+          'Open your email app and paste to share.');
+    }
+  }
+
+  Future<bool> _sendEmailViaUrlLauncher() async {
+    try {
+      final String subject = Uri.encodeComponent('My Current Location');
+      final String body = Uri.encodeComponent('Hello,\n\n'
+          'My current location is:\n'
+          '$_locationText\n\n'
+          'Google Maps Link:\n'
+          'https://maps.google.com/?q=${_currentPosition!.latitude},${_currentPosition!.longitude}\n\n'
+          'Coordinates:\n'
+          'Latitude: ${_currentPosition!.latitude}\n'
+          'Longitude: ${_currentPosition!.longitude}\n\n'
+          'Sent from Love is Blind App');
+
+      final Uri emailUri =
+          Uri.parse('mailto:$_recipientEmail?subject=$subject&body=$body');
+
+      if (await canLaunchUrl(emailUri)) {
+        await launchUrl(emailUri);
+        await _speak('Opening email app with your location. Just tap send.');
+        AccessibilityTheme.provideSuccessFeedback();
+        setState(() {
+          _statusMessage = 'Email app opened';
+        });
+        return true;
+      }
+      return false;
+    } catch (e) {
+      print('Error with URL launcher email: $e');
+      return false;
+    }
+  }
+
+  Future<void> _sendEmergency() async {
+    if (_currentPosition == null) {
+      await _getCurrentLocation();
+    }
+
+    setState(() {
+      _statusMessage = 'Sending EMERGENCY location...';
+    });
+
+    await _speak('Sending emergency location via WhatsApp and email');
+
+    // Try both WhatsApp and Email
+    await _shareLocationViaWhatsApp();
+    await Future.delayed(const Duration(seconds: 2));
+    await _shareLocationViaEmail();
+  }
+
+  Future<void> _copyLocationToClipboard() async {
+    if (_currentPosition == null) {
+      await _speak('No location to copy. Get location first.');
+      return;
+    }
+
+    String message = 'My current location: $_locationText\n'
+        'Google Maps: https://maps.google.com/?q=${_currentPosition!.latitude},${_currentPosition!.longitude}';
+
+    await Clipboard.setData(ClipboardData(text: message));
+
+    AccessibilityTheme.provideSuccessFeedback();
+    setState(() {
+      _statusMessage = 'Location copied to clipboard';
+    });
+  }
+
   Future<void> _repeatLocation() async {
     if (_currentAddress != null) {
-      await _speak('Your current location is: $_currentAddress');
+      await _speak(
+          'Your location is: $_currentAddress. Say "whatsapp location" or "email location" to share.');
     } else {
       await _speak('No location available. Say "get location" first.');
     }
   }
 
-  Future<void> _shareLocation() async {
-    if (_currentPosition != null) {
-      String shareText = 'My current location: $_locationText\n'
-          'Coordinates: ${_currentPosition!.latitude}, ${_currentPosition!.longitude}';
-
-      // Here you would integrate with sharing services
-      await _speak('Location ready to share: $shareText');
-      AccessibilityTheme.provideSuccessFeedback();
-    } else {
-      await _speak('No location to share. Get your location first.');
-    }
-  }
-
   Future<void> _provideHelp() async {
     String helpText = 'Available voice commands: '
-        'Say "get location" to find your current position. '
-        'Say "repeat" to hear the location again. '
-        'Say "share" to prepare location for sharing. '
-        'Say "back" to exit this screen.';
+        '"Get location" to find where you are. '
+        '"WhatsApp location" to send via WhatsApp. '
+        '"Email location" to send via email. '
+        '"Emergency" to share via both WhatsApp and email. '
+        '"Repeat" to hear your location again. '
+        '"Back" to exit this screen.';
 
     await _speak(helpText);
   }
@@ -284,10 +468,19 @@ class _LocationScreenState extends State<LocationScreen> {
                   border: Border.all(color: AccessibilityTheme.primaryColor),
                   borderRadius: BorderRadius.circular(8.0),
                 ),
-                child: Text(
-                  _statusMessage,
-                  style: Theme.of(context).textTheme.bodyLarge,
-                  textAlign: TextAlign.center,
+                child: Column(
+                  children: [
+                    Text(
+                      _statusMessage,
+                      style: Theme.of(context).textTheme.bodyLarge,
+                      textAlign: TextAlign.center,
+                    ),
+                    if (_isSendingEmail || _isLoadingLocation)
+                      const Padding(
+                        padding: EdgeInsets.only(top: 8.0),
+                        child: LinearProgressIndicator(),
+                      ),
+                  ],
                 ),
               ),
             ),
@@ -321,11 +514,14 @@ class _LocationScreenState extends State<LocationScreen> {
                         textAlign: TextAlign.center,
                       ),
                     ),
-                    if (_isLoadingLocation) ...[
+                    if (_currentPosition != null) ...[
                       const SizedBox(height: AccessibilityTheme.spacingM),
-                      const CircularProgressIndicator(
-                        strokeWidth: 4.0,
-                        color: AccessibilityTheme.primaryColor,
+                      Text(
+                        'Ready to share',
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                              color: Colors.green,
+                              fontWeight: FontWeight.bold,
+                            ),
                       ),
                     ],
                   ],
@@ -339,22 +535,23 @@ class _LocationScreenState extends State<LocationScreen> {
             AccessibleButton(
               text: _isListening ? 'Listening...' : 'Tap to Speak Command',
               icon: _isListening ? Icons.mic : Icons.mic_none,
-              onPressed: _isListening ? () {} : _startListening,
+              onPressed: _startListening,
               semanticLabel: _isListening
                   ? 'Currently listening for voice commands'
                   : 'Tap to start voice command',
+              isLarge: true,
             ),
 
             const SizedBox(height: AccessibilityTheme.spacingM),
 
-            // Quick action buttons
+            // Quick action buttons - Row 1
             Row(
               children: [
                 Expanded(
                   child: AccessibleButton(
                     text: 'Get Location',
                     icon: Icons.my_location,
-                    onPressed: _isLoadingLocation ? () {} : _getCurrentLocation,
+                    onPressed: _isLoadingLocation ? null : _getCurrentLocation,
                     isPrimary: false,
                     semanticLabel: 'Get current location',
                   ),
@@ -362,16 +559,140 @@ class _LocationScreenState extends State<LocationScreen> {
                 const SizedBox(width: AccessibilityTheme.spacingS),
                 Expanded(
                   child: AccessibleButton(
-                    text: 'Help',
-                    icon: Icons.help,
-                    onPressed: _provideHelp,
-                    isPrimary: false,
-                    semanticLabel: 'Get help with voice commands',
+                    text: 'WhatsApp',
+                    icon: Icons.chat,
+                    onPressed: _currentPosition == null
+                        ? null
+                        : _shareLocationViaWhatsApp,
+                    isPrimary: true,
+                    isWhatsApp: true,
+                    semanticLabel: 'Send location via WhatsApp',
                   ),
                 ),
               ],
             ),
+
+            const SizedBox(height: AccessibilityTheme.spacingS),
+
+            // Quick action buttons - Row 2
+            Row(
+              children: [
+                Expanded(
+                  child: AccessibleButton(
+                    text: 'Email',
+                    icon: Icons.email,
+                    onPressed: _currentPosition == null
+                        ? null
+                        : _shareLocationViaEmail,
+                    isPrimary: true,
+                    semanticLabel: 'Send location via email',
+                  ),
+                ),
+                const SizedBox(width: AccessibilityTheme.spacingS),
+                Expanded(
+                  child: AccessibleButton(
+                    text: 'EMERGENCY',
+                    icon: Icons.warning,
+                    onPressed: _sendEmergency,
+                    isPrimary: false,
+                    isEmergency: true,
+                    semanticLabel: 'Emergency location sharing',
+                  ),
+                ),
+              ],
+            ),
+
+            const SizedBox(height: AccessibilityTheme.spacingS),
+
+            AccessibleButton(
+              text: 'Help',
+              icon: Icons.help_outline,
+              onPressed: _provideHelp,
+              isPrimary: false,
+              semanticLabel: 'Get help with voice commands',
+            ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+// Enhanced AccessibleButton widget
+class AccessibleButton extends StatelessWidget {
+  final String text;
+  final IconData icon;
+  final VoidCallback? onPressed;
+  final bool isPrimary;
+  final bool isEmergency;
+  final bool isWhatsApp;
+  final bool isLarge;
+  final String semanticLabel;
+
+  const AccessibleButton({
+    Key? key,
+    required this.text,
+    required this.icon,
+    required this.onPressed,
+    this.isPrimary = true,
+    this.isEmergency = false,
+    this.isWhatsApp = false,
+    this.isLarge = false,
+    required this.semanticLabel,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    Color backgroundColor;
+    Color foregroundColor;
+
+    if (isEmergency) {
+      backgroundColor = Colors.red;
+      foregroundColor = Colors.white;
+    } else if (isWhatsApp) {
+      backgroundColor = const Color(0xFF25D366); // WhatsApp green
+      foregroundColor = Colors.white;
+    } else if (isPrimary) {
+      backgroundColor = AccessibilityTheme.primaryColor;
+      foregroundColor = Colors.white;
+    } else {
+      backgroundColor = AccessibilityTheme.surfaceColor;
+      foregroundColor = AccessibilityTheme.primaryColor;
+    }
+
+    return Semantics(
+      button: true,
+      label: semanticLabel,
+      child: ElevatedButton.icon(
+        onPressed: onPressed,
+        icon: Icon(icon, size: isLarge ? 32 : 24),
+        label: Text(
+          text,
+          style: TextStyle(
+            fontSize: isLarge ? 18 : 16,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: backgroundColor,
+          foregroundColor: foregroundColor,
+          padding: EdgeInsets.symmetric(
+            horizontal: AccessibilityTheme.spacingM,
+            vertical: isLarge
+                ? AccessibilityTheme.spacingL
+                : AccessibilityTheme.spacingM,
+          ),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+            side: BorderSide(
+              color: isEmergency
+                  ? Colors.red
+                  : isWhatsApp
+                      ? const Color(0xFF25D366)
+                      : AccessibilityTheme.primaryColor,
+              width: (isPrimary || isEmergency || isWhatsApp) ? 0 : 2,
+            ),
+          ),
         ),
       ),
     );

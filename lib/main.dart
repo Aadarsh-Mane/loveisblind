@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:loveisblind/screens/LocationScreen.dart';
 import 'package:loveisblind/screens/MainScreen.dart';
+import 'package:loveisblind/screens/SplashScreen.dart';
 
 void main() {
   runApp(const MyApp());
@@ -33,7 +34,7 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
       ),
-      home: const VoiceAssistantApp(),
+      home: const SplashScreen(),
     );
   }
 }
